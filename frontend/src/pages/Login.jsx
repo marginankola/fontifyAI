@@ -1,12 +1,27 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
+import api from '../utils/api'; // Axios instance for API calls
 
 const Login = () => {
   const navigate = useNavigate();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const location = useLocation();
+  
+  // Enhanced state management
+  const [formData, setFormData] = useState({
+    email: '',
+    password: ''
+  });
+  
+  // Additional states for better UX
+  const [isLoading, setIsLoading] = useState(false);
+  const [errors, setErrors] = useState({});
+  const [successMessage, setSuccessMessage] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
+
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [clickedBubble, setClickedBubble] = useState(null);
+  const animationFrameRef = useRef(null);
+  const clickTimeoutRef = useRef(null);
 
   // Memoize font families and letters to prevent recreation on every render
   const fontFamilies = useMemo(() => [
@@ -17,6 +32,20 @@ const Login = () => {
 
   const letters = useMemo(() => ['F', 'O', 'N', 'T', 'F', 'O', 'N', 'T', 'F', 'O', 'N', 'T'], []);
 
+  // Check for data passed from signup page
+  useEffect(() => {
+    if (location.state) {
+      if (location.state.email) {
+        setFormData(prev => ({ ...prev, email: location.state.email }));
+      }
+      if (location.state.message) {
+        setSuccessMessage(location.state.message);
+        // Clear the message after showing it
+        setTimeout(() => setSuccessMessage(''), 4000);
+      }
+    }
+  }, [location.state]);
+
   // Optimized mouse tracking with throttling to prevent lag
   const updateMousePosition = useCallback((e) => {
     setMousePosition({
@@ -26,34 +55,158 @@ const Login = () => {
   }, []);
 
   useEffect(() => {
-    // Throttle mouse events to improve performance
-    let animationFrameId;
-    
     const throttledMouseMove = (e) => {
-      if (animationFrameId) return;
+      if (animationFrameRef.current) return;
       
-      animationFrameId = requestAnimationFrame(() => {
+      animationFrameRef.current = requestAnimationFrame(() => {
         updateMousePosition(e);
-        animationFrameId = null;
+        animationFrameRef.current = null;
       });
     };
 
     window.addEventListener('mousemove', throttledMouseMove);
     return () => {
       window.removeEventListener('mousemove', throttledMouseMove);
-      if (animationFrameId) {
-        cancelAnimationFrame(animationFrameId);
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (clickTimeoutRef.current) {
+        clearTimeout(clickTimeoutRef.current);
       }
     };
   }, [updateMousePosition]);
 
-  // Handle form submission
-  const handleLogin = (e) => {
+  // Enhanced input change handler
+  const handleInputChange = useCallback((field) => (e) => {
+    const value = e.target.value;
+    
+    // Clear errors when user starts typing
+    setErrors({});
+    setSuccessMessage('');
+    
+    setFormData(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  }, []);
+
+  // Professional login form submission with comprehensive error handling
+  const handleLogin = useCallback(async (e) => {
     e.preventDefault();
-    // TODO: Add MongoDB login logic here
-    console.log('Logging in with', { email, password });
-    navigate('/home');
-  };
+    setErrors({});
+    setSuccessMessage('');
+    
+    // Frontend validation
+    const validationErrors = {};
+    
+    if (!formData.email.trim()) {
+      validationErrors.email = 'Email is required';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+      validationErrors.email = 'Please enter a valid email address';
+    }
+
+    if (!formData.password) {
+      validationErrors.password = 'Password is required';
+    }
+
+    if (Object.keys(validationErrors).length > 0) {
+      setErrors(validationErrors);
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      // Prepare login data
+      const loginData = {
+        email: formData.email.trim().toLowerCase(),
+        password: formData.password
+      };
+
+      const response = await api.post('/auth/login', loginData);
+      
+      // Success handling
+      console.log('Login successful:', response.data);
+      
+      // Store token if provided (for authentication)
+      if (response.data.token) {
+        if (rememberMe) {
+          localStorage.setItem('authToken', response.data.token);
+        } else {
+          sessionStorage.setItem('authToken', response.data.token);
+        }
+      }
+      
+      // Show success message briefly
+      setSuccessMessage('Login successful! Welcome back.');
+      
+      // Clear form
+      setFormData({
+        email: '',
+        password: ''
+      });
+      
+      // Redirect to home after brief delay
+      setTimeout(() => {
+        navigate('/home');
+      }, 1000);
+      
+    } catch (err) {
+      console.error('Login error:', err);
+      
+      setIsLoading(false); // Reset loading state on error
+      
+      if (err.response && err.response.data) {
+        const errorData = err.response.data;
+        
+        // Handle specific backend errors
+        if (err.response.status === 400) {
+          if (errorData.msg && errorData.msg.includes('email')) {
+            setErrors({ 
+              email: 'Please enter a valid email address.' 
+            });
+          } else if (errorData.msg && errorData.msg.includes('password')) {
+            setErrors({ 
+              password: 'Password is required.' 
+            });
+          } else {
+            setErrors({ 
+              general: errorData.msg || 'Please check your login credentials.' 
+            });
+          }
+        } else if (err.response.status === 401) {
+          // Unauthorized - wrong credentials
+          setErrors({ 
+            general: 'Invalid email or password. Please check your credentials and try again.' 
+          });
+        } else if (err.response.status === 404) {
+          // User not found
+          setErrors({ 
+            email: 'No account found with this email address. Please sign up first.' 
+          });
+        } else if (err.response.status === 422) {
+          // Validation error
+          setErrors({ 
+            general: 'Please check your email and password format.' 
+          });
+        } else {
+          setErrors({ 
+            general: 'Login failed. Please try again later.' 
+          });
+        }
+      } else if (err.request) {
+        // Network error
+        setErrors({ 
+          general: 'Network error. Please check your internet connection and try again.' 
+        });
+      } else {
+        // Other error
+        setErrors({ 
+          general: 'An unexpected error occurred. Please try again.' 
+        });
+      }
+    }
+  }, [formData, rememberMe, navigate]);
 
   // Optimized shadow calculation with memoization
   const calculateShadow = useCallback((elementX, elementY) => {
@@ -72,8 +225,11 @@ const Login = () => {
   const handleBubbleClick = useCallback((index) => {
     setClickedBubble(index);
     
-    // Reset click animation after completion
-    setTimeout(() => {
+    if (clickTimeoutRef.current) {
+      clearTimeout(clickTimeoutRef.current);
+    }
+    
+    clickTimeoutRef.current = setTimeout(() => {
       setClickedBubble(null);
     }, 400);
   }, []);
@@ -203,42 +359,86 @@ const Login = () => {
               <p className="text-gray-400">Sign in to access all fonts</p>
             </div>
 
+            {/* Fixed Height Success/Error Message Container - No Layout Shifting */}
+            <div className="w-full h-12 mb-6">
+              {successMessage && (
+                <div className="p-3 bg-green-500/20 border border-green-500/30 rounded-lg backdrop-blur-sm">
+                  <p className="text-green-300 text-xs text-center">{successMessage}</p>
+                </div>
+              )}
+              {errors.general && (
+                <div className="p-3 bg-red-500/20 border border-red-500/30 rounded-lg backdrop-blur-sm">
+                  <p className="text-red-300 text-xs text-center">{errors.general}</p>
+                </div>
+              )}
+            </div>
+
             {/* Login Form */}
-            <form onSubmit={handleLogin} className="space-y-6">
-              {/* Email Input */}
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-gray-300">
+            <form onSubmit={handleLogin} className="space-y-5">
+              {/* Email Input - Fixed Height Container */}
+              <div className="h-20">
+                <label className="block text-sm font-medium text-gray-300 mb-2">
                   Email Address
                 </label>
                 <input
                   type="email"
-                  className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-white/30 focus:border-white/40 transition-all duration-200 backdrop-blur-sm"
+                  className={`w-full px-4 py-3 bg-white/5 border rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 transition-all duration-200 backdrop-blur-sm ${
+                    errors.email
+                      ? 'border-red-500/50 focus:ring-red-500/30 focus:border-red-500/60'
+                      : 'border-white/20 focus:ring-white/30 focus:border-white/40'
+                  }`}
                   placeholder="Enter your email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  value={formData.email}
+                  onChange={handleInputChange('email')}
                   required
+                  autoComplete="email"
+                  disabled={isLoading}
                 />
+                {/* Fixed height error container */}
+                <div className="h-4 mt-1">
+                  {errors.email && (
+                    <p className="text-red-400 text-xs">{errors.email}</p>
+                  )}
+                </div>
               </div>
 
-              {/* Password Input */}
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-gray-300">
+              {/* Password Input - Fixed Height Container */}
+              <div className="h-20">
+                <label className="block text-sm font-medium text-gray-300 mb-2">
                   Password
                 </label>
                 <input
                   type="password"
-                  className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-white/30 focus:border-white/40 transition-all duration-200 backdrop-blur-sm"
+                  className={`w-full px-4 py-3 bg-white/5 border rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 transition-all duration-200 backdrop-blur-sm ${
+                    errors.password
+                      ? 'border-red-500/50 focus:ring-red-500/30 focus:border-red-500/60'
+                      : 'border-white/20 focus:ring-white/30 focus:border-white/40'
+                  }`}
                   placeholder="Enter your password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  value={formData.password}
+                  onChange={handleInputChange('password')}
                   required
+                  autoComplete="current-password"
+                  disabled={isLoading}
                 />
+                {/* Fixed height error container */}
+                <div className="h-4 mt-1">
+                  {errors.password && (
+                    <p className="text-red-400 text-xs">{errors.password}</p>
+                  )}
+                </div>
               </div>
 
               {/* Remember Me & Forgot Password */}
               <div className="flex items-center justify-between">
                 <label className="flex items-center text-sm text-gray-300">
-                  <input type="checkbox" className="mr-2 rounded bg-white/10 border-white/20" />
+                  <input 
+                    type="checkbox" 
+                    className="mr-2 rounded bg-white/10 border-white/20"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    disabled={isLoading}
+                  />
                   Remember me
                 </label>
                 <Link to="/forgot-password" className="text-sm text-white/70 hover:text-white transition-colors">
@@ -246,15 +446,34 @@ const Login = () => {
                 </Link>
               </div>
 
-              {/* Login Button */}
+              {/* Login Button with Enhanced States */}
               <button
                 type="submit"
-                className="w-full bg-white/10 hover:bg-white/20 text-white font-semibold py-3 rounded-lg border border-white/30 transition-all duration-200 backdrop-blur-sm transform hover:scale-[1.02] active:scale-[0.98]"
+                disabled={isLoading}
+                className={`w-full font-semibold py-3 rounded-lg border transition-all duration-200 backdrop-blur-sm transform ${
+                  isLoading 
+                    ? 'bg-white/5 border-white/20 text-white/50 cursor-not-allowed' 
+                    : successMessage
+                    ? 'bg-green-500/20 border-green-500/30 text-green-300 cursor-not-allowed'
+                    : 'bg-white/10 hover:bg-white/20 border-white/30 text-white hover:scale-[1.02] active:scale-[0.98]'
+                }`}
                 style={{
-                  boxShadow: '0 4px 20px rgba(255, 255, 255, 0.1)'
+                  boxShadow: isLoading ? 'none' : '0 4px 20px rgba(255, 255, 255, 0.1)'
                 }}
               >
-                Sign In
+                {isLoading ? (
+                  <div className="flex items-center justify-center space-x-2">
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white/80 rounded-full animate-spin"></div>
+                    <span>Signing In...</span>
+                  </div>
+                ) : successMessage ? (
+                  <div className="flex items-center justify-center space-x-2">
+                    <div className="w-5 h-5 text-green-400">✓</div>
+                    <span>Welcome Back!</span>
+                  </div>
+                ) : (
+                  'Sign In'
+                )}
               </button>
             </form>
 
