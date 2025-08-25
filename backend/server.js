@@ -13,7 +13,10 @@ app.use(express.json());
 
 // Routes
 const authRoutes = require('./routes/authRoutes');
+const fontsRoutes = require('./routes/fontsRoutes'); // <-- NEW
+
 app.use('/api/auth', authRoutes);
+app.use('/api/fonts', fontsRoutes); // <-- NEW
 
 // MongoDB Connection
 mongoose.connect(process.env.MONGO_URI, {
