@@ -6,7 +6,7 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import ForgotPassword from './pages/ForgotPassword';
 import Home from './pages/Home';
-import ExploreFonts from './pages/Explorefonts';   // NEW
+import ExploreFonts from './pages/ExploreFonts';   // NEW
 import FontDetails from './pages/FontDetails';     // Placeholder (later use)
 
 function App() {
